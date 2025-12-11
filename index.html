@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>UniDrop - Staff Parcel Verification</title>
+
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0d1117;
+      color: #fff;
+      text-align: center;
+      padding: 20px;
+    }
+    video {
+      width: 350px;
+      border-radius: 10px;
+      border: 2px solid #58a6ff;
+      margin-top: 20px;
+    }
+    #result-box {
+      margin-top: 20px;
+      padding: 15px;
+      background: #161b22;
+      border-radius: 8px;
+      display: none;
+      text-align: left;
+      max-width: 350px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    button {
+      padding: 10px 20px;
+      border: none;
+      background: #2ea043;
+      color: white;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:hover {
+      background: #238636;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>Parcel Verification</h1>
+  <p>Point the camera at the UniDrop ID</p>
+
+  <video id="camera" autoplay></video>
+
+  <button onclick="scanText()">Scan Text</button>
+
+  <div id="result-box"></div>
+
+  <!-- Tesseract.js OCR -->
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <script>
+    // Firebase Config
+    const firebaseConfig = {
+      apiKey: "AIzaSyCjP_ZvkY1cwCmPE738KMGYOohZJt4py3c",
+      authDomain: "parcel-pin-system.firebaseapp.com",
+      projectId: "parcel-pin-system",
+      storageBucket: "parcel-pin-system.appspot.com",
+      messagingSenderId: "444891168630",
+      appId: "1:444891168630:web:7dacb5087988c6325ac457"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // Start camera
+    const video = document.getElementById("camera");
+
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => { video.srcObject = stream })
+      .catch(err => alert("Camera error: " + err));
+
+    // Scan text from camera
+    async function scanText() {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+
+      const imageData = canvas.toDataURL("image/png");
+
+      document.getElementById("result-box").innerHTML =
+        "<p>Reading text... please wait.</p>";
+      document.getElementById("result-box").style.display = "block";
+
+      const result = await Tesseract.recognize(imageData, "eng");
+
+      let scannedText = result.data.text.trim();
+      scannedText = scannedText.replace(/\s+/g, "");
+
+      // Detect ANY ID that looks like UD-XXXXX
+      const match = scannedText.match(/UD[-]?[A-Za-z0-9]+/);
+
+      if (!match) {
+        document.getElementById("result-box").innerHTML =
+          "<p style='color:red'>No UniDrop ID detected.</p>";
+        return;
+      }
+
+      const unidropID = match[0];
+
+      // Firestore lookup
+      verifyParcel(unidropID);
+    }
+
+    // Check Firestore for ID
+    async function verifyParcel(unidropID) {
+      const resultBox = document.getElementById("result-box");
+
+      try {
+        const parcels = await db.collection("parcels")
+          .where("unidropID", "==", unidropID)
+          .where("status", "==", "pending")
+          .get();
+
+        if (parcels.empty) {
+          resultBox.innerHTML =
+            `<p style='color:red;'>No pending parcels for ID: <b>${unidropID}</b></p>`;
+          return;
+        }
+
+        const parcel = parcels.docs[0].data();
+        const parcelRef = parcels.docs[0].ref;
+
+        resultBox.innerHTML = `
+          <p><strong>UniDrop ID:</strong> ${unidropID}</p>
+          <p><strong>Parcel ID:</strong> ${parcel.parcelID}</p>
+          <p><strong>Recipient:</strong> ${parcel.recipient}</p>
+          <p><strong>Arrival:</strong> ${parcel.arrival}</p>
+          <button onclick="markCollected('${parcelRef.id}')">Mark as Collected</button>
+        `;
+      }
+      catch(err){
+        resultBox.innerHTML = `<p style='color:red;'>Error: ${err.message}</p>`;
+      }
+    }
+
+    // Mark as collected
+    async function markCollected(docID) {
+      await db.collection("parcels").doc(docID).update({ status: "collected" });
+
+      document.getElementById("result-box").innerHTML =
+        "<p style='color:#2ea043; font-weight:bold;'>Parcel collected successfully!</p>";
+    }
+  </script>
+
+</body>
+</html>
